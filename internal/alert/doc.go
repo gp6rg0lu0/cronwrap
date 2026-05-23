@@ -20,4 +20,8 @@
 //	}
 //
 // If the To field is empty, Notify is a no-op and returns nil.
+//
+// Authentication is optional: if both Username and Password are empty,
+// the client connects to the SMTP server without authenticating. This is
+// useful for local or internal relay servers that do not require credentials.
 package alert
