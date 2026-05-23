@@ -38,3 +38,29 @@ func TestNoopSenderResetClearsSlice(t *testing.T) {
 		t.Errorf("expected nil slice after Reset, got %v", s.Messages)
 	}
 }
+
+func TestNoopSenderRecordsFields(t *testing.T) {
+	s := &notify.NoopSender{}
+	recipients := []string{"alice@example.com", "bob@example.com"}
+	subject := "test subject"
+	body := "test body"
+
+	if err := s.Send(recipients, subject, body); err != nil {
+		t.Fatalf("Send returned unexpected error: %v", err)
+	}
+
+	if len(s.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(s.Messages))
+	}
+
+	msg := s.Messages[0]
+	if msg.Subject != subject {
+		t.Errorf("expected subject %q, got %q", subject, msg.Subject)
+	}
+	if msg.Body != body {
+		t.Errorf("expected body %q, got %q", body, msg.Body)
+	}
+	if len(msg.To) != len(recipients) {
+		t.Errorf("expected %d recipients, got %d", len(recipients), len(msg.To))
+	}
+}
