@@ -8,82 +8,87 @@ import (
 func TestSummarizeNoRuns(t *testing.T) {
 	s := tempStore(t)
 
-	_, err := s.Summarize("ghost-job")
-	if err == nil {
-		t.Fatal("expected error for unknown job, got nil")
+	sum, err := s.Summarize("no-such-job")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sum.TotalRuns != 0 {
+		t.Errorf("expected 0 runs, got %d", sum.TotalRuns)
+	}
+	if sum.JobName != "no-such-job" {
+		t.Errorf("expected job name 'no-such-job', got %q", sum.JobName)
 	}
 }
 
 func TestSummarizeSingleSuccess(t *testing.T) {
 	s := tempStore(t)
 
-	err := s.Save(Run{
-		JobName:    "backup",
-		StartedAt:  time.Now(),
-		DurationMs: 1200,
-		ExitCode:   0,
-		Output:     "done",
-	})
-	if err != nil {
-		t.Fatalf("Save: %v", err)
+	rec := Record{
+		JobName:   "backup",
+		StartedAt: time.Now().Add(-5 * time.Minute),
+		Duration:  10 * time.Second,
+		ExitCode:  0,
+		Success:   true,
+		Output:    "done",
+	}
+	if err := s.Save(rec); err != nil {
+		t.Fatalf("save: %v", err)
 	}
 
 	sum, err := s.Summarize("backup")
 	if err != nil {
-		t.Fatalf("Summarize: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if sum.TotalRuns != 1 {
-		t.Errorf("TotalRuns: want 1, got %d", sum.TotalRuns)
+		t.Errorf("expected 1 run, got %d", sum.TotalRuns)
 	}
-	if sum.SuccessRuns != 1 {
-		t.Errorf("SuccessRuns: want 1, got %d", sum.SuccessRuns)
+	if sum.SuccessCount != 1 {
+		t.Errorf("expected 1 success, got %d", sum.SuccessCount)
 	}
-	if sum.FailureRuns != 0 {
-		t.Errorf("FailureRuns: want 0, got %d", sum.FailureRuns)
+	if sum.FailureCount != 0 {
+		t.Errorf("expected 0 failures, got %d", sum.FailureCount)
 	}
 	if sum.LastStatus != "success" {
-		t.Errorf("LastStatus: want success, got %s", sum.LastStatus)
+		t.Errorf("expected last status 'success', got %q", sum.LastStatus)
 	}
-	if sum.JobName != "backup" {
-		t.Errorf("JobName: want backup, got %s", sum.JobName)
+	if sum.AvgDuration != 10*time.Second {
+		t.Errorf("expected avg duration 10s, got %v", sum.AvgDuration)
 	}
 }
 
 func TestSummarizeMixedResults(t *testing.T) {
 	s := tempStore(t)
 
-	runs := []Run{
-		{JobName: "sync", StartedAt: time.Now().Add(-3 * time.Minute), DurationMs: 500, ExitCode: 0, Output: "ok"},
-		{JobName: "sync", StartedAt: time.Now().Add(-2 * time.Minute), DurationMs: 700, ExitCode: 1, Output: "err"},
-		{JobName: "sync", StartedAt: time.Now().Add(-1 * time.Minute), DurationMs: 600, ExitCode: 0, Output: "ok"},
+	now := time.Now()
+	records := []Record{
+		{JobName: "sync", StartedAt: now.Add(-10 * time.Minute), Duration: 2 * time.Second, ExitCode: 0, Success: true, Output: "ok"},
+		{JobName: "sync", StartedAt: now.Add(-5 * time.Minute), Duration: 4 * time.Second, ExitCode: 1, Success: false, Output: "err"},
+		{JobName: "sync", StartedAt: now.Add(-1 * time.Minute), Duration: 6 * time.Second, ExitCode: 0, Success: true, Output: "ok"},
 	}
-	for _, r := range runs {
+	for _, r := range records {
 		if err := s.Save(r); err != nil {
-			t.Fatalf("Save: %v", err)
+			t.Fatalf("save: %v", err)
 		}
 	}
 
 	sum, err := s.Summarize("sync")
 	if err != nil {
-		t.Fatalf("Summarize: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if sum.TotalRuns != 3 {
-		t.Errorf("TotalRuns: want 3, got %d", sum.TotalRuns)
+		t.Errorf("expected 3 runs, got %d", sum.TotalRuns)
 	}
-	if sum.SuccessRuns != 2 {
-		t.Errorf("SuccessRuns: want 2, got %d", sum.SuccessRuns)
+	if sum.SuccessCount != 2 {
+		t.Errorf("expected 2 successes, got %d", sum.SuccessCount)
 	}
-	if sum.FailureRuns != 1 {
-		t.Errorf("FailureRuns: want 1, got %d", sum.FailureRuns)
+	if sum.FailureCount != 1 {
+		t.Errorf("expected 1 failure, got %d", sum.FailureCount)
 	}
 	if sum.LastStatus != "success" {
-		t.Errorf("LastStatus: want success, got %s", sum.LastStatus)
+		t.Errorf("expected last status 'success', got %q", sum.LastStatus)
 	}
-
-	wantAvg := (500.0 + 700.0 + 600.0) / 3.0 / 1000.0
-	if diff := sum.AvgDuration - wantAvg; diff > 0.001 || diff < -0.001 {
-		t.Errorf("AvgDuration: want %.4f, got %.4f", wantAvg, sum.AvgDuration)
+	// avg = (2+4+6)/3 = 4s
+	if sum.AvgDuration != 4*time.Second {
+		t.Errorf("expected avg duration 4s, got %v", sum.AvgDuration)
 	}
 }

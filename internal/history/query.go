@@ -1,76 +1,72 @@
 package history
 
 import (
-	"database/sql"
 	"fmt"
 	"time"
 )
 
-// Summary holds aggregated statistics for a single job.
+// Summary holds aggregated statistics for a job's run history.
 type Summary struct {
-	JobName     string
-	TotalRuns   int
-	SuccessRuns int
-	FailureRuns int
-	LastRun     time.Time
-	LastStatus  string
-	AvgDuration float64 // seconds
+	JobName      string
+	TotalRuns    int
+	SuccessCount int
+	FailureCount int
+	LastRun      time.Time
+	LastStatus   string
+	AvgDuration  time.Duration
 }
 
-// Summarize returns aggregated run statistics for the named job.
-// If the job has no recorded runs, it returns an error.
-func (s *Store) Summarize(jobName string) (*Summary, error) {
-	query := `
-		SELECT
-			COUNT(*) AS total,
-			SUM(CASE WHEN exit_code = 0 THEN 1 ELSE 0 END) AS successes,
-			SUM(CASE WHEN exit_code != 0 THEN 1 ELSE 0 END) AS failures,
-			MAX(started_at) AS last_run,
-			AVG(duration_ms) / 1000.0 AS avg_duration_sec
-		FROM runs
-		WHERE job_name = ?
-	`
+// Summarize computes a Summary for the given job from its stored records.
+// It returns an error if the job name is empty or no records are found.
+func (s *Store) Summarize(jobName string) (Summary, error) {
+	if jobName == "" {
+		return Summary{}, fmt.Errorf("job name must not be empty")
+	}
 
-	row := s.db.QueryRow(query, jobName)
-
-	var total, successes, failures int
-	var lastRun time.Time
-	var avgDuration float64
-
-	err := row.Scan(&total, &successes, &failures, &lastRun, &avgDuration)
+	records, err := s.List(jobName, 0)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("history: no runs found for job %q", jobName)
-		}
-		return nil, fmt.Errorf("history: summarize query failed: %w", err)
+		return Summary{}, fmt.Errorf("summarize %q: %w", jobName, err)
 	}
 
-	if total == 0 {
-		return nil, fmt.Errorf("history: no runs found for job %q", jobName)
+	if len(records) == 0 {
+		return Summary{JobName: jobName}, nil
 	}
 
-	// Fetch the status of the most recent run.
-	var lastStatus string
-	statusRow := s.db.QueryRow(
-		`SELECT exit_code FROM runs WHERE job_name = ? ORDER BY started_at DESC LIMIT 1`,
-		jobName,
+	var (
+		successes   int
+		failures    int
+		totalNanos  int64
+		latestTime  time.Time
+		latestStatus string
 	)
-	var lastCode int
-	if err := statusRow.Scan(&lastCode); err == nil {
-		if lastCode == 0 {
-			lastStatus = "success"
+
+	for _, r := range records {
+		if r.Success {
+			successes++
 		} else {
-			lastStatus = "failure"
+			failures++
+		}
+		totalNanos += r.Duration.Nanoseconds()
+
+		if r.StartedAt.After(latestTime) {
+			latestTime = r.StartedAt
+			if r.Success {
+				latestStatus = "success"
+			} else {
+				latestStatus = "failure"
+			}
 		}
 	}
 
-	return &Summary{
-		JobName:     jobName,
-		TotalRuns:   total,
-		SuccessRuns: successes,
-		FailureRuns: failures,
-		LastRun:     lastRun,
-		LastStatus:  lastStatus,
-		AvgDuration: avgDuration,
+	avg := time.Duration(totalNanos / int64(len(records)))
+
+	return Summary{
+		JobName:      jobName,
+		TotalRuns:    len(records),
+		SuccessCount: successes,
+		FailureCount: failures,
+		LastRun:      latestTime,
+		LastStatus:   latestStatus,
+		AvgDuration:  avg,
 	}, nil
 }
